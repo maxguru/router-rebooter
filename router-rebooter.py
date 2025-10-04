@@ -111,6 +111,7 @@ import logging
 import signal
 import sys
 import threading
+import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import RPi.GPIO as GPIO
 
@@ -304,6 +305,23 @@ def start_http_server():
     logger.info(f"HTTP server started on port {HTTP_PORT}")
     server.serve_forever()
 
+def get_local_ip():
+    """Get the local IP address of the Raspberry Pi."""
+    try:
+        # Create a socket connection to determine local IP
+        # This doesn't actually send data, just determines routing
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        # Fallback: try to get from hostname
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "localhost"
+
 def cleanup_and_exit(signum=None, frame=None):
     """Clean up GPIO on exit."""
     logger.info("Shutting down router rebooter...")
@@ -345,7 +363,10 @@ def main():
     has_rebooted = False
 
     logger.info("Router rebooter started. Monitoring internet connection...")
-    logger.info(f"Web interface available at http://<your-ip>:{HTTP_PORT}")
+
+    # Get and display the actual IP address
+    local_ip = get_local_ip()
+    logger.info(f"Web interface available at http://{local_ip}:{HTTP_PORT}")
 
     try:
         while True:
