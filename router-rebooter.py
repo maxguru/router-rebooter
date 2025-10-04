@@ -10,7 +10,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
-        logging.FileHandler('router-rebooter.log'),
+        logging.FileHandler('router-rebooter.log', mode='a'),  # 'a' for append mode
         logging.StreamHandler()
     ]
 )
