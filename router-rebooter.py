@@ -2,6 +2,8 @@
 import time
 import subprocess
 import logging
+import signal
+import sys
 import RPi.GPIO as GPIO
 
 # Configure logging to both console and file
@@ -10,59 +12,82 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
-        logging.FileHandler('router-rebooter.log', mode='a'),  # 'a' for append mode
+        logging.FileHandler('router-rebooter.log', mode='a'),
         logging.StreamHandler()
     ]
 )
 
 logger = logging.getLogger(__name__)
 
+# GPIO setup
+RELAY_PIN = 17
 GPIO.setmode(GPIO.BCM)
-relay_pin = 17
-GPIO.setup(relay_pin, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(RELAY_PIN, GPIO.OUT, initial=GPIO.LOW)
 
-def internet_ok(host="8.8.8.8"):
+def cleanup_and_exit(signum=None, frame=None):
+    """Clean up GPIO on exit."""
+    logger.info("Shutting down router rebooter...")
+    GPIO.cleanup()
+    sys.exit(0)
+
+# Register signal handlers for clean shutdown
+signal.signal(signal.SIGINT, cleanup_and_exit)
+signal.signal(signal.SIGTERM, cleanup_and_exit)
+
+def check_internet(host="8.8.8.8"):
+    """Check if internet is available by pinging a host."""
     try:
-        result = subprocess.run(["ping", "-c1", "-W2", host],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
-        return (result.returncode == 0)
-    except Exception:
+        result = subprocess.run(
+            ["ping", "-c1", "-W2", host],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"Error checking internet: {e}")
         return False
 
-# State tracking variables
-internet_was_online = True  # Assume internet starts online
-has_rebooted_for_current_outage = False
+def reboot_router():
+    """Power cycle the router via relay."""
+    logger.warning("Rebooting router...")
+    GPIO.output(RELAY_PIN, GPIO.HIGH)  # Turn router OFF
+    time.sleep(5)
+    GPIO.output(RELAY_PIN, GPIO.LOW)   # Turn router ON
+    logger.info("Router reboot complete.")
 
-logger.info("Router rebooter started. Monitoring internet connection...")
+def main():
+    """Main monitoring loop."""
+    internet_was_online = True
+    has_rebooted = False
 
-while True:
-    internet_is_online = internet_ok()
+    logger.info("Router rebooter started. Monitoring internet connection...")
 
-    if internet_is_online:
-        if not internet_was_online:
-            # Internet just came back online
-            logger.info("Internet connection restored!")
-            has_rebooted_for_current_outage = False  # Reset for next outage
-        internet_was_online = True
-        time.sleep(10)  # Check again in 10 seconds
-    else:
-        if internet_was_online:
-            # Internet just went offline
-            logger.warning("Internet connection lost!")
+    try:
+        while True:
+            internet_is_online = check_internet()
 
-        if not has_rebooted_for_current_outage:
-            # First time detecting this outage - reboot the router
-            logger.warning("Rebooting router...")
-            GPIO.output(relay_pin, GPIO.HIGH)  # energize coil -> router power OFF
-            time.sleep(5)                       # wait a few seconds
-            GPIO.output(relay_pin, GPIO.LOW)   # de-energize coil -> router power ON
-            has_rebooted_for_current_outage = True
-            logger.info("Router reboot complete. Waiting 60 seconds before next check...")
-            time.sleep(60)  # wait 60s before next check
-        else:
-            # Already rebooted for this outage, just wait
-            logger.info("Internet still down (already rebooted for this outage). Checking again in 30 seconds...")
-            time.sleep(30)  # Check more frequently but don't reboot
+            if internet_is_online:
+                if not internet_was_online:
+                    logger.info("Internet connection restored!")
+                    has_rebooted = False
+                internet_was_online = True
+                time.sleep(10)
+            else:
+                if internet_was_online:
+                    logger.warning("Internet connection lost!")
+                    internet_was_online = False
 
-        internet_was_online = False
+                if not has_rebooted:
+                    reboot_router()
+                    has_rebooted = True
+                    time.sleep(60)
+                else:
+                    logger.info("Internet still down (already rebooted). Checking again in 30 seconds...")
+                    time.sleep(30)
+
+    except Exception as e:
+        logger.error(f"Unexpected error in main loop: {e}")
+        cleanup_and_exit()
+
+if __name__ == "__main__":
+    main()
