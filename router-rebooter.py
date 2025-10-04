@@ -1,4 +1,110 @@
 #!/usr/bin/env python3
+"""
+Router Rebooter - Automatic Internet Connection Monitor and Router Power Cycler
+
+DESCRIPTION:
+    This script monitors internet connectivity by pinging a remote host (default: 8.8.8.8).
+    When the internet connection is lost, it automatically power-cycles the router using
+    a relay connected to a Raspberry Pi GPIO pin. The script includes intelligent state
+    tracking to ensure it only reboots once per outage (won't repeatedly reboot if the
+    internet doesn't come back immediately).
+
+    Features:
+    - Monitors internet connectivity continuously
+    - Automatically reboots router when connection is lost
+    - Only reboots once per outage (waits for connection to restore before rebooting again)
+    - Logs all events to both console and a log file with timestamps
+    - Built-in HTTP server for viewing logs via web browser
+    - Graceful shutdown with proper GPIO cleanup
+
+HARDWARE REQUIREMENTS:
+    - Raspberry Pi (any model with GPIO)
+    - Relay module connected to GPIO pin 17 (configurable)
+    - Router connected to relay's normally-open (NO) contacts
+
+WIRING:
+    - GPIO Pin 17 -> Relay IN/Signal pin
+    - GND -> Relay GND
+    - Router power -> Relay COM (common)
+    - Power source -> Relay NO (normally open)
+
+    When GPIO pin goes HIGH, relay energizes and cuts power to router.
+    When GPIO pin goes LOW, relay de-energizes and restores power to router.
+
+INSTALLATION:
+    1. Create a virtual environment:
+       python3 -m venv venv
+
+    2. Activate the virtual environment:
+       source venv/bin/activate
+
+    3. Install required packages:
+       pip install RPi.GPIO
+
+    Note: RPi.GPIO is the only external dependency. All other modules
+          (time, subprocess, logging, signal, sys, threading, http.server)
+          are part of Python's standard library.
+
+USAGE:
+    1. Make the script executable:
+       chmod +x router-rebooter.py
+
+    2. Run the script:
+       ./router-rebooter.py
+
+       Or with Python directly:
+       python3 router-rebooter.py
+
+    3. Access the web interface:
+       Open a browser and navigate to:
+       http://<raspberry-pi-ip>:8080
+
+       To find your Raspberry Pi's IP address:
+       hostname -I
+
+RUNNING AS A SERVICE (Optional):
+    To run this script automatically on boot, create a systemd service:
+
+    1. Create service file:
+       sudo nano /etc/systemd/system/router-rebooter.service
+
+    2. Add the following content:
+       [Unit]
+       Description=Router Rebooter Service
+       After=network.target
+
+       [Service]
+       Type=simple
+       User=pi
+       WorkingDirectory=/home/pi/router-rebooter
+       ExecStart=/home/pi/router-rebooter/venv/bin/python3 /home/pi/router-rebooter/router-rebooter.py
+       Restart=always
+       RestartSec=10
+
+       [Install]
+       WantedBy=multi-user.target
+
+    3. Enable and start the service:
+       sudo systemctl daemon-reload
+       sudo systemctl enable router-rebooter.service
+       sudo systemctl start router-rebooter.service
+
+    4. Check status:
+       sudo systemctl status router-rebooter.service
+
+CONFIGURATION:
+    Edit the constants at the top of the script to customize:
+    - RELAY_PIN: GPIO pin number (default: 17)
+    - LOG_FILE: Log file path (default: 'router-rebooter.log')
+    - HTTP_PORT: Web interface port (default: 8080)
+
+LOG FILE:
+    All events are logged to 'router-rebooter.log' with timestamps.
+    The log file is appended to (not overwritten) on each restart.
+    View logs via web interface at http://<ip>:8080 or directly in the file.
+
+"""
+
 import time
 import subprocess
 import logging
