@@ -113,12 +113,16 @@ import sys
 import threading
 import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from queue import Queue
 import RPi.GPIO as GPIO
 
 # Configuration
 RELAY_PIN = 17
 LOG_FILE = 'router-rebooter.log'
 HTTP_PORT = 8080
+
+# Global event queue for communication between web server and main loop
+reboot_queue = Queue()
 
 # Configure logging to both console and file
 logging.basicConfig(
@@ -163,6 +167,60 @@ class LogViewerHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f.read().encode())
             except FileNotFoundError:
                 self.wfile.write(b"Log file not found.")
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"404 - Not Found")
+
+    def do_POST(self):
+        """Handle POST requests."""
+        if self.path == '/reboot':
+            # Queue a reboot request
+            reboot_queue.put('manual_reboot')
+            logger.info("Manual reboot requested via web interface")
+
+            # Send response
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+
+            html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Reboot Requested</title>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="3;url=/">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .message {
+            text-align: center;
+            padding: 40px;
+            background-color: #252526;
+            border-radius: 10px;
+            border: 2px solid #0e639c;
+        }
+        h1 { color: #4ec9b0; }
+        p { font-size: 18px; }
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h1>✅ Router Reboot Requested</h1>
+        <p>The router will be rebooted shortly...</p>
+        <p><small>Redirecting to logs in 3 seconds...</small></p>
+    </div>
+</body>
+</html>"""
+            self.wfile.write(html.encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -225,6 +283,12 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         .controls button:hover {{
             background-color: #1177bb;
         }}
+        .controls button.reboot {{
+            background-color: #d9534f;
+        }}
+        .controls button.reboot:hover {{
+            background-color: #c9302c;
+        }}
         .log-box {{
             background-color: #252526;
             border: 1px solid #3e3e42;
@@ -260,6 +324,20 @@ class LogViewerHandler(BaseHTTPRequestHandler):
             var logBox = document.getElementById('logBox');
             logBox.scrollTop = logBox.scrollHeight;
         }}
+        function rebootRouter() {{
+            if (confirm('Are you sure you want to reboot the router?')) {{
+                fetch('/reboot', {{
+                    method: 'POST'
+                }})
+                .then(response => response.text())
+                .then(html => {{
+                    document.body.innerHTML = html;
+                }})
+                .catch(error => {{
+                    alert('Error requesting reboot: ' + error);
+                }});
+            }}
+        }}
         window.onload = function() {{
             scrollToBottom();
         }};
@@ -272,6 +350,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
             <button onclick="refreshPage()">🔄 Refresh</button>
             <button onclick="scrollToBottom()">⬇️ Scroll to Bottom</button>
             <button onclick="window.open('/raw', '_blank')">📄 View Raw</button>
+            <button class="reboot" onclick="rebootRouter()">🔌 Reboot Router</button>
         </div>
         <div class="truncated">{truncated_msg}</div>
         <div class="log-box" id="logBox">{self.colorize_logs(log_content)}</div>
@@ -370,6 +449,14 @@ def main():
 
     try:
         while True:
+            # Check for manual reboot requests from web interface
+            if not reboot_queue.empty():
+                reboot_queue.get()  # Clear the queue
+                reboot_router()
+                has_rebooted = True
+                time.sleep(60)
+                continue
+
             internet_is_online = check_internet()
 
             if internet_is_online:
