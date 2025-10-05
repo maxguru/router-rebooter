@@ -46,16 +46,24 @@ INSTALLATION:
           are part of Python's standard library.
 
 USAGE:
-    1. Make the script executable:
+    1. Create a configuration file:
+       python3 router-rebooter.py --create-config router-rebooter.conf
+
+       Then edit the configuration file to customize settings.
+
+    2. Make the script executable (optional):
        chmod +x router-rebooter.py
 
-    2. Run the script:
-       ./router-rebooter.py
+    3. Run the script:
+       ./router-rebooter.py --config router-rebooter.conf
 
        Or with Python directly:
+       python3 router-rebooter.py --config router-rebooter.conf
+
+       Or use default config file location:
        python3 router-rebooter.py
 
-    3. Access the web interface:
+    4. Access the web interface:
        Open a browser and navigate to:
        http://<raspberry-pi-ip>:8080
 
@@ -77,7 +85,7 @@ RUNNING AS A SERVICE (Optional):
        Type=simple
        User=pi
        WorkingDirectory=/home/pi/router-rebooter
-       ExecStart=/home/pi/router-rebooter/venv/bin/python3 /home/pi/router-rebooter/router-rebooter.py
+       ExecStart=/home/pi/router-rebooter/venv/bin/python3 /home/pi/router-rebooter/router-rebooter.py --config /home/pi/router-rebooter/router-rebooter.conf
        Restart=always
        RestartSec=10
 
@@ -93,10 +101,32 @@ RUNNING AS A SERVICE (Optional):
        sudo systemctl status router-rebooter.service
 
 CONFIGURATION:
-    Edit the constants at the top of the script to customize:
-    - RELAY_PIN: GPIO pin number (default: 17)
-    - LOG_FILE: Log file path (default: 'router-rebooter.log')
-    - HTTP_PORT: Web interface port (default: 8080)
+    The script requires a configuration file (default: router-rebooter.conf).
+    Create one using the --create-config option.
+
+    Configuration file format (INI style):
+
+    [Network]
+    ping_host = 8.8.8.8              # Host to ping for internet check
+    ping_retries = 5                  # Number of ping retries before declaring offline
+    check_interval_online = 10        # Seconds between checks when internet is up
+    check_interval_offline = 30       # Seconds between checks when internet is down
+
+    [GPIO]
+    relay_pin = 17                    # GPIO pin number for relay control
+
+    [HTTP]
+    port = 8080                       # Web interface port
+
+    [Logging]
+    log_file = router-rebooter.log    # Log file path
+    log_level = INFO                  # Log level (DEBUG, INFO, WARNING, ERROR)
+
+    Create a config file:
+    python3 router-rebooter.py --create-config router-rebooter.conf
+
+    Use a custom config file:
+    python3 router-rebooter.py --config /path/to/custom.conf
 
 LOG FILE:
     All events are logged to 'router-rebooter.log' with timestamps.
@@ -112,34 +142,109 @@ import signal
 import sys
 import threading
 import socket
+import argparse
+import configparser
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from queue import Queue
 import RPi.GPIO as GPIO
 
-# Configuration
-RELAY_PIN = 17
-LOG_FILE = 'router-rebooter.log'
-HTTP_PORT = 8080
+# Default configuration file path
+DEFAULT_CONFIG_FILE = 'router-rebooter.conf'
 
 # Global event queue for communication between web server and main loop
 reboot_queue = Queue()
 
-# Configure logging to both console and file
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(LOG_FILE, mode='a'),
-        logging.StreamHandler()
-    ]
-)
+# Global configuration (will be loaded from config file in main)
+# Declared here for reference by functions
+config = {}
 
+def create_default_config(config_path):
+    """Create a default configuration file and exit."""
+    if os.path.exists(config_path):
+        print(f"Error: Configuration file already exists: {config_path}")
+        print("Remove it first or specify a different path.")
+        sys.exit(1)
+
+    parser = configparser.ConfigParser()
+
+    # Add comments by writing manually
+    with open(config_path, 'w') as f:
+        f.write("# Router Rebooter Configuration File\n")
+        f.write("# Edit these settings as needed\n\n")
+
+    parser['Network'] = {
+        'ping_host': '8.8.8.8',
+        'ping_retries': '5',
+        'check_interval_online': '10',
+        'check_interval_offline': '30'
+    }
+
+    parser['GPIO'] = {
+        'relay_pin': '17'
+    }
+
+    parser['HTTP'] = {
+        'port': '8080'
+    }
+
+    parser['Logging'] = {
+        'log_file': 'router-rebooter.log',
+        'log_level': 'INFO'
+    }
+
+    with open(config_path, 'a') as f:
+        parser.write(f)
+
+    print(f"Created default configuration file: {config_path}")
+    sys.exit(0)
+
+def load_config(config_path):
+    """Load configuration from file."""
+    if not os.path.exists(config_path):
+        print(f"Error: Configuration file not found: {config_path}")
+        print(f"\nCreate a default configuration file with:")
+        print(f"  {sys.argv[0]} --create-config {config_path}")
+        sys.exit(1)
+
+    parser = configparser.ConfigParser()
+    parser.read(config_path)
+
+    # Load configuration into global dict
+    cfg = {
+        'ping_host': parser.get('Network', 'ping_host'),
+        'ping_retries': parser.getint('Network', 'ping_retries'),
+        'check_interval_online': parser.getint('Network', 'check_interval_online'),
+        'check_interval_offline': parser.getint('Network', 'check_interval_offline'),
+        'relay_pin': parser.getint('GPIO', 'relay_pin'),
+        'http_port': parser.getint('HTTP', 'port'),
+        'log_file': parser.get('Logging', 'log_file'),
+        'log_level': parser.get('Logging', 'log_level'),
+        'config_path': config_path
+    }
+
+    return cfg
+
+# Logger will be configured after loading config
 logger = logging.getLogger(__name__)
 
-# GPIO setup
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(RELAY_PIN, GPIO.OUT, initial=GPIO.LOW)
+def setup_logging(log_file, log_level):
+    """Configure logging after config is loaded."""
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_file, mode='a'),
+            logging.StreamHandler()
+        ],
+        force=True  # Reconfigure if already configured
+    )
+
+def setup_gpio(relay_pin):
+    """Configure GPIO after config is loaded."""
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(relay_pin, GPIO.OUT, initial=GPIO.LOW)
 
 class LogViewerHandler(BaseHTTPRequestHandler):
     """HTTP request handler for viewing logs."""
@@ -163,7 +268,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             try:
-                with open(LOG_FILE, 'r') as f:
+                with open(config['log_file'], 'r') as f:
                     self.wfile.write(f.read().encode())
             except FileNotFoundError:
                 self.wfile.write(b"Log file not found.")
@@ -224,7 +329,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         elif self.path == '/clear-log':
             # Clear the log file
             try:
-                with open(LOG_FILE, 'w') as f:
+                with open(config['log_file'], 'w') as f:
                     f.write('')
                 logger.info("Log file cleared via web interface")
 
@@ -247,7 +352,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
     def generate_log_page(self):
         """Generate HTML page with log content."""
         try:
-            with open(LOG_FILE, 'r') as f:
+            with open(config['log_file'], 'r') as f:
                 log_content = f.read()
         except FileNotFoundError:
             log_content = "Log file not found."
@@ -422,8 +527,8 @@ class LogViewerHandler(BaseHTTPRequestHandler):
 
 def start_http_server():
     """Start HTTP server in a separate thread."""
-    server = HTTPServer(('0.0.0.0', HTTP_PORT), LogViewerHandler)
-    logger.info(f"HTTP server started on port {HTTP_PORT}")
+    server = HTTPServer(('0.0.0.0', config['http_port']), LogViewerHandler)
+    logger.info(f"HTTP server started on port {config['http_port']}")
     server.serve_forever()
 
 def get_local_ip():
@@ -453,8 +558,10 @@ def cleanup_and_exit(signum=None, frame=None):
 signal.signal(signal.SIGINT, cleanup_and_exit)
 signal.signal(signal.SIGTERM, cleanup_and_exit)
 
-def check_internet(host="8.8.8.8", retries=5):
+def check_internet():
     """Check if internet is available by pinging a host with retries."""
+    host = config['ping_host']
+    retries = config['ping_retries']
     failed_attempts = 0
 
     for attempt in range(retries):
@@ -487,9 +594,9 @@ def check_internet(host="8.8.8.8", retries=5):
 def reboot_router():
     """Power cycle the router via relay."""
     logger.warning("Rebooting router...")
-    GPIO.output(RELAY_PIN, GPIO.HIGH)  # Turn router OFF
+    GPIO.output(config['relay_pin'], GPIO.HIGH)  # Turn router OFF
     time.sleep(5)  # Keep router off for 5 seconds
-    GPIO.output(RELAY_PIN, GPIO.LOW)   # Turn router ON
+    GPIO.output(config['relay_pin'], GPIO.LOW)   # Turn router ON
     logger.info("Router reboot complete.")
     time.sleep(5)  # Take a breather before doing anything else
 
@@ -506,7 +613,7 @@ def main():
 
     # Get and display the actual IP address
     local_ip = get_local_ip()
-    logger.info(f"Web interface available at http://{local_ip}:{HTTP_PORT}")
+    logger.info(f"Web interface available at http://{local_ip}:{config['http_port']}")
 
     try:
         while True:
@@ -526,7 +633,7 @@ def main():
                     logger.info("Internet connection restored!")
                     has_rebooted = False
                 internet_was_online = True
-                time.sleep(10)
+                time.sleep(config['check_interval_online'])
             else:
                 if internet_was_online:
                     logger.warning("Internet connection lost!")
@@ -536,12 +643,49 @@ def main():
                     reboot_router()
                     has_rebooted = True
                 else:
-                    logger.info("Internet still down (already rebooted). Checking again in 30 seconds...")
-                    time.sleep(30)
+                    logger.info(f"Internet still down (already rebooted). Checking again in {config['check_interval_offline']} seconds...")
+                    time.sleep(config['check_interval_offline'])
 
     except Exception as e:
         logger.error(f"Unexpected error in main loop: {e}")
         cleanup_and_exit()
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='Router Rebooter - Automatic Internet Connection Monitor',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Create a default configuration file
+  python3 router-rebooter.py --create-config router-rebooter.conf
+
+  # Run with default config file
+  python3 router-rebooter.py
+
+  # Run with custom config file
+  python3 router-rebooter.py --config /path/to/custom.conf
+        """
+    )
+    parser.add_argument('-c', '--config',
+                        default=DEFAULT_CONFIG_FILE,
+                        help=f'Path to configuration file (default: {DEFAULT_CONFIG_FILE})')
+    parser.add_argument('--create-config',
+                        metavar='PATH',
+                        help='Create a default configuration file at PATH and exit')
+    args = parser.parse_args()
+
+    # Handle --create-config
+    if args.create_config:
+        create_default_config(args.create_config)
+        # create_default_config() calls sys.exit(), so we never reach here
+
+    # Load configuration into global config dict
+    config.update(load_config(args.config))
+
+    # Setup logging and GPIO based on config
+    setup_logging(config['log_file'], config['log_level'])
+    setup_gpio(config['relay_pin'])
+
+    # Run main loop
     main()
