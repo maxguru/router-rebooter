@@ -65,6 +65,14 @@ ping_host = 8.8.8.8
 # Number of ping retries before declaring internet is offline
 ping_retries = 5
 
+# Seconds to wait for each ping response
+ping_timeout = 2
+
+# Ping packet data size in bytes (0-65507)
+# 0 bytes (default) sends minimal packet for reachability check only
+# 56 bytes tests data integrity through the network
+ping_packet_size = 0
+
 # Seconds to wait between checks when internet is online
 check_interval_online = 10
 
@@ -103,6 +111,32 @@ log_level = INFO
 ```bash
 python3 router-rebooter.py --config /path/to/custom.conf
 ```
+
+### Configuring Ping Behavior
+
+You can customize how the script checks internet connectivity:
+
+**Ping Timeout (`ping_timeout`):**
+- How long to wait for each ping response (in seconds)
+- Default: `2` seconds
+- Lower values = faster detection but may cause false positives on slow connections
+- Higher values = more tolerant of latency but slower to detect outages
+
+**Ping Packet Size (`ping_packet_size`):**
+- Size of data payload in ping packets (in bytes)
+- Default: `0` bytes (minimal packet for reachability check)
+- Range: `0` to `65507` bytes
+
+**Choosing packet size:**
+- **0 bytes (default)**: Minimal ICMP header only
+  - Smallest possible packet
+  - Only verifies host reachability (sufficient for router rebooter)
+  - Fastest and lowest bandwidth usage
+
+- **56 bytes**: Standard ping, tests data integrity through the network
+  - Verifies that data can traverse the network without corruption
+  - More robust connectivity check
+  - Use if you want to detect network degradation, not just complete outages
 
 ### Enabling HTTPS/SSL (Optional)
 

@@ -109,6 +109,8 @@ CONFIGURATION:
     [Network]
     ping_host = 8.8.8.8              # Host to ping for internet check
     ping_retries = 5                  # Number of ping retries before declaring offline
+    ping_timeout = 2                  # Seconds to wait for ping response
+    ping_packet_size = 0              # Ping packet data size in bytes (0-65507, default 0)
     check_interval_online = 10        # Seconds between checks when internet is up
     check_interval_offline = 30       # Seconds between checks when internet is down
 
@@ -183,6 +185,8 @@ def create_default_config(config_path):
     parser['Network'] = {
         'ping_host': '8.8.8.8',
         'ping_retries': '5',
+        'ping_timeout': '2',
+        'ping_packet_size': '0',
         'check_interval_online': '10',
         'check_interval_offline': '30'
     }
@@ -226,6 +230,8 @@ def load_config(config_path):
     cfg = {
         'ping_host': parser.get('Network', 'ping_host'),
         'ping_retries': parser.getint('Network', 'ping_retries'),
+        'ping_timeout': parser.getint('Network', 'ping_timeout', fallback=2),
+        'ping_packet_size': parser.getint('Network', 'ping_packet_size', fallback=0),
         'check_interval_online': parser.getint('Network', 'check_interval_online'),
         'check_interval_offline': parser.getint('Network', 'check_interval_offline'),
         'relay_pin': parser.getint('GPIO', 'relay_pin'),
@@ -687,12 +693,14 @@ def check_internet():
     """Check if internet is available by pinging a host with retries."""
     host = config['ping_host']
     retries = config['ping_retries']
+    timeout = config['ping_timeout']
+    packet_size = config['ping_packet_size']
     failed_attempts = 0
 
     for attempt in range(retries):
         try:
             result = subprocess.run(
-                ["ping", "-c1", "-W2", "-s0", host],
+                ["ping", "-c1", f"-W{timeout}", f"-s{packet_size}", host],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
