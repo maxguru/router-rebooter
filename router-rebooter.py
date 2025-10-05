@@ -221,6 +221,24 @@ class LogViewerHandler(BaseHTTPRequestHandler):
 </body>
 </html>"""
             self.wfile.write(html.encode())
+        elif self.path == '/clear-log':
+            # Clear the log file
+            try:
+                with open(LOG_FILE, 'w') as f:
+                    f.write('')
+                logger.info("Log file cleared via web interface")
+
+                # Send simple success response
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b"OK")
+            except Exception as e:
+                logger.error(f"Error clearing log file: {e}")
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Error: {e}".encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -289,6 +307,12 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         .controls button.reboot:hover {{
             background-color: #c9302c;
         }}
+        .controls button.clear {{
+            background-color: #f0ad4e;
+        }}
+        .controls button.clear:hover {{
+            background-color: #ec971f;
+        }}
         .log-box {{
             background-color: #252526;
             border: 1px solid #3e3e42;
@@ -338,6 +362,23 @@ class LogViewerHandler(BaseHTTPRequestHandler):
                 }});
             }}
         }}
+        function clearLog() {{
+            if (confirm('Are you sure you want to clear the log file? This cannot be undone.')) {{
+                fetch('/clear-log', {{
+                    method: 'POST'
+                }})
+                .then(response => {{
+                    if (response.ok) {{
+                        location.reload();  // Just reload the page to show empty log
+                    }} else {{
+                        alert('Error clearing log');
+                    }}
+                }})
+                .catch(error => {{
+                    alert('Error clearing log: ' + error);
+                }});
+            }}
+        }}
         window.onload = function() {{
             scrollToBottom();
         }};
@@ -351,6 +392,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
             <button onclick="scrollToBottom()">⬇️ Scroll to Bottom</button>
             <button onclick="window.open('/raw', '_blank')">📄 View Raw</button>
             <button class="reboot" onclick="rebootRouter()">🔌 Reboot Router</button>
+            <button class="clear" onclick="clearLog()">🗑️ Clear Log</button>
         </div>
         <div class="truncated">{truncated_msg}</div>
         <div class="log-box" id="logBox">{self.colorize_logs(log_content)}</div>
