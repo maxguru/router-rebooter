@@ -692,7 +692,7 @@ def check_internet():
     for attempt in range(retries):
         try:
             result = subprocess.run(
-                ["ping", "-c1", "-W2", host],
+                ["ping", "-c1", "-W2", "-s0", host],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
