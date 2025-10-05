@@ -553,7 +553,7 @@ class LogViewerHandler(BaseHTTPRequestHandler):
 </head>
 <body>
     <div class="container">
-        <h1>🔌 Router Rebooter Logs</h1>
+        <h1>🔌 Router Rebooter</h1>
         <div class="controls">
             <button onclick="refreshPage()">🔄 Refresh</button>
             <button onclick="scrollToBottom()">⬇️ Scroll to Bottom</button>
