@@ -411,18 +411,36 @@ def cleanup_and_exit(signum=None, frame=None):
 signal.signal(signal.SIGINT, cleanup_and_exit)
 signal.signal(signal.SIGTERM, cleanup_and_exit)
 
-def check_internet(host="8.8.8.8"):
-    """Check if internet is available by pinging a host."""
-    try:
-        result = subprocess.run(
-            ["ping", "-c1", "-W2", host],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        return result.returncode == 0
-    except Exception as e:
-        logger.error(f"Error checking internet: {e}")
-        return False
+def check_internet(host="8.8.8.8", retries=5):
+    """Check if internet is available by pinging a host with retries."""
+    failed_attempts = 0
+
+    for attempt in range(retries):
+        try:
+            result = subprocess.run(
+                ["ping", "-c1", "-W2", host],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            if result.returncode == 0:
+                # Report packet loss if there were any failures before success
+                if failed_attempts > 0:
+                    loss_percent = (failed_attempts / (attempt + 1)) * 100
+                    logger.warning(f"Packet loss detected: {failed_attempts}/{attempt + 1} packets lost ({loss_percent:.1f}%)")
+                return True  # Success - internet is up
+            else:
+                failed_attempts += 1
+        except Exception as e:
+            failed_attempts += 1
+            logger.error(f"Error checking internet (attempt {attempt + 1}/{retries}): {e}")
+
+        # If failed and not last attempt, wait before retry
+        if attempt < retries - 1:
+            time.sleep(1)
+
+    # All retries failed
+    logger.warning(f"Internet check failed: {failed_attempts}/{retries} packets lost (100% packet loss)")
+    return False
 
 def reboot_router():
     """Power cycle the router via relay."""
