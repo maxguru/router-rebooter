@@ -454,6 +454,8 @@ def main():
             if not reboot_queue.empty():
                 reboot_queue.get()  # Clear the queue
                 reboot_router()
+                # Assume internet goes offline after manual reboot
+                internet_was_online = False
                 has_rebooted = True
                 continue
 
