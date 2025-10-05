@@ -117,6 +117,8 @@ CONFIGURATION:
 
     [HTTP]
     port = 8080                       # Web interface port
+    auth_username =                   # HTTP Basic Auth username (leave empty to disable)
+    auth_password =                   # HTTP Basic Auth password (leave empty to disable)
 
     [Logging]
     log_file = router-rebooter.log    # Log file path
@@ -145,6 +147,7 @@ import socket
 import argparse
 import configparser
 import os
+import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from queue import Queue
 import RPi.GPIO as GPIO
@@ -185,7 +188,9 @@ def create_default_config(config_path):
     }
 
     parser['HTTP'] = {
-        'port': '8080'
+        'port': '8080',
+        'auth_username': '',
+        'auth_password': ''
     }
 
     parser['Logging'] = {
@@ -218,6 +223,8 @@ def load_config(config_path):
         'check_interval_offline': parser.getint('Network', 'check_interval_offline'),
         'relay_pin': parser.getint('GPIO', 'relay_pin'),
         'http_port': parser.getint('HTTP', 'port'),
+        'http_auth_username': parser.get('HTTP', 'auth_username', fallback=''),
+        'http_auth_password': parser.get('HTTP', 'auth_password', fallback=''),
         'log_file': parser.get('Logging', 'log_file'),
         'log_level': parser.get('Logging', 'log_level'),
         'config_path': config_path
@@ -253,8 +260,48 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         """Suppress default HTTP server logging."""
         pass
 
+    def check_auth(self):
+        """Check HTTP Basic Authentication if enabled."""
+        # If no auth configured, allow access
+        if not config.get('http_auth_username') or not config.get('http_auth_password'):
+            return True
+
+        # Get Authorization header
+        auth_header = self.headers.get('Authorization')
+        if not auth_header:
+            return False
+
+        # Parse Basic Auth
+        try:
+            auth_type, auth_string = auth_header.split(' ', 1)
+            if auth_type.lower() != 'basic':
+                return False
+
+            # Decode base64 credentials
+            decoded = base64.b64decode(auth_string).decode('utf-8')
+            username, password = decoded.split(':', 1)
+
+            # Check credentials
+            return (username == config['http_auth_username'] and
+                    password == config['http_auth_password'])
+        except Exception:
+            return False
+
+    def send_auth_required(self):
+        """Send 401 Unauthorized response."""
+        self.send_response(401)
+        self.send_header('WWW-Authenticate', 'Basic realm="Router Rebooter"')
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'<html><body><h1>401 Unauthorized</h1><p>Authentication required.</p></body></html>')
+
     def do_GET(self):
         """Handle GET requests."""
+        # Check authentication
+        if not self.check_auth():
+            self.send_auth_required()
+            return
+
         if self.path == '/' or self.path == '/logs':
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
@@ -279,6 +326,11 @@ class LogViewerHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Handle POST requests."""
+        # Check authentication
+        if not self.check_auth():
+            self.send_auth_required()
+            return
+
         if self.path == '/reboot':
             # Queue a reboot request
             reboot_queue.put('manual_reboot')
