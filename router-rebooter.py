@@ -119,6 +119,9 @@ CONFIGURATION:
     port = 8080                       # Web interface port
     auth_username =                   # HTTP Basic Auth username (leave empty to disable)
     auth_password =                   # HTTP Basic Auth password (leave empty to disable)
+    ssl_enabled = false               # Enable HTTPS with self-signed certificate
+    ssl_cert = cert.pem               # Path to SSL certificate file
+    ssl_key = key.pem                 # Path to SSL private key file
 
     [Logging]
     log_file = router-rebooter.log    # Log file path
@@ -148,6 +151,7 @@ import argparse
 import configparser
 import os
 import base64
+import ssl
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from queue import Queue
 import RPi.GPIO as GPIO
@@ -190,7 +194,10 @@ def create_default_config(config_path):
     parser['HTTP'] = {
         'port': '8080',
         'auth_username': '',
-        'auth_password': ''
+        'auth_password': '',
+        'ssl_enabled': 'false',
+        'ssl_cert': 'cert.pem',
+        'ssl_key': 'key.pem'
     }
 
     parser['Logging'] = {
@@ -225,6 +232,9 @@ def load_config(config_path):
         'http_port': parser.getint('HTTP', 'port'),
         'http_auth_username': parser.get('HTTP', 'auth_username', fallback=''),
         'http_auth_password': parser.get('HTTP', 'auth_password', fallback=''),
+        'ssl_enabled': parser.getboolean('HTTP', 'ssl_enabled', fallback=False),
+        'ssl_cert': parser.get('HTTP', 'ssl_cert', fallback='cert.pem'),
+        'ssl_key': parser.get('HTTP', 'ssl_key', fallback='key.pem'),
         'log_file': parser.get('Logging', 'log_file'),
         'log_level': parser.get('Logging', 'log_level'),
         'config_path': config_path
@@ -577,10 +587,61 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         """Escape HTML special characters."""
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
+def generate_self_signed_cert(cert_file, key_file):
+    """Generate a self-signed SSL certificate using openssl command."""
+    try:
+        # Check if files already exist
+        if os.path.exists(cert_file) and os.path.exists(key_file):
+            logger.info(f"SSL certificate already exists: {cert_file}")
+            return True
+
+        logger.info("Generating self-signed SSL certificate...")
+
+        # Generate self-signed certificate using openssl
+        result = subprocess.run([
+            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+            '-keyout', key_file,
+            '-out', cert_file,
+            '-days', '365',
+            '-nodes',
+            '-subj', '/CN=router-rebooter'
+        ], capture_output=True, text=True)
+
+        if result.returncode == 0:
+            logger.info(f"SSL certificate generated: {cert_file}")
+            return True
+        else:
+            logger.error(f"Failed to generate SSL certificate: {result.stderr}")
+            return False
+    except FileNotFoundError:
+        logger.error("openssl command not found. Install openssl to use SSL.")
+        return False
+    except Exception as e:
+        logger.error(f"Error generating SSL certificate: {e}")
+        return False
+
 def create_http_server():
     """Create HTTP server instance (for error checking before threading)."""
     try:
         server = HTTPServer(('0.0.0.0', config['http_port']), LogViewerHandler)
+
+        # Enable SSL if configured
+        if config.get('ssl_enabled'):
+            cert_file = config['ssl_cert']
+            key_file = config['ssl_key']
+
+            # Generate certificate if it doesn't exist
+            if not os.path.exists(cert_file) or not os.path.exists(key_file):
+                if not generate_self_signed_cert(cert_file, key_file):
+                    logger.error("Failed to generate SSL certificate. Exiting.")
+                    sys.exit(1)
+
+            # Wrap socket with SSL
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert_file, key_file)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            logger.info("SSL enabled")
+
         return server
     except OSError as e:
         logger.error(f"Failed to start HTTP server on port {config['http_port']}: {e}")
@@ -591,7 +652,8 @@ def create_http_server():
 
 def start_http_server(server):
     """Run HTTP server (called in background thread)."""
-    logger.info(f"HTTP server started on port {config['http_port']}")
+    protocol = "HTTPS" if config.get('ssl_enabled') else "HTTP"
+    logger.info(f"{protocol} server started on port {config['http_port']}")
     server.serve_forever()
 
 def get_local_ip():
@@ -679,7 +741,8 @@ def main():
 
     # Get and display the actual IP address
     local_ip = get_local_ip()
-    logger.info(f"Web interface available at http://{local_ip}:{config['http_port']}")
+    protocol = "https" if config.get('ssl_enabled') else "http"
+    logger.info(f"Web interface available at {protocol}://{local_ip}:{config['http_port']}")
 
     try:
         while True:
