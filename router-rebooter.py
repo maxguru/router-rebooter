@@ -428,9 +428,10 @@ def reboot_router():
     """Power cycle the router via relay."""
     logger.warning("Rebooting router...")
     GPIO.output(RELAY_PIN, GPIO.HIGH)  # Turn router OFF
-    time.sleep(5)
+    time.sleep(5)  # Keep router off for 5 seconds
     GPIO.output(RELAY_PIN, GPIO.LOW)   # Turn router ON
     logger.info("Router reboot complete.")
+    time.sleep(5)  # Take a breather before doing anything else
 
 def main():
     """Main monitoring loop."""
@@ -454,7 +455,6 @@ def main():
                 reboot_queue.get()  # Clear the queue
                 reboot_router()
                 has_rebooted = True
-                time.sleep(60)
                 continue
 
             internet_is_online = check_internet()
@@ -473,7 +473,6 @@ def main():
                 if not has_rebooted:
                     reboot_router()
                     has_rebooted = True
-                    time.sleep(60)
                 else:
                     logger.info("Internet still down (already rebooted). Checking again in 30 seconds...")
                     time.sleep(30)
