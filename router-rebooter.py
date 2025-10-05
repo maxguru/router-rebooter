@@ -577,9 +577,20 @@ class LogViewerHandler(BaseHTTPRequestHandler):
         """Escape HTML special characters."""
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def start_http_server():
-    """Start HTTP server in a separate thread."""
-    server = HTTPServer(('0.0.0.0', config['http_port']), LogViewerHandler)
+def create_http_server():
+    """Create HTTP server instance (for error checking before threading)."""
+    try:
+        server = HTTPServer(('0.0.0.0', config['http_port']), LogViewerHandler)
+        return server
+    except OSError as e:
+        logger.error(f"Failed to start HTTP server on port {config['http_port']}: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error starting HTTP server: {e}")
+        sys.exit(1)
+
+def start_http_server(server):
+    """Run HTTP server (called in background thread)."""
     logger.info(f"HTTP server started on port {config['http_port']}")
     server.serve_forever()
 
@@ -654,8 +665,11 @@ def reboot_router():
 
 def main():
     """Main monitoring loop."""
+    # Create HTTP server (this will exit if there's an error)
+    http_server = create_http_server()
+
     # Start HTTP server in background thread
-    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread = threading.Thread(target=start_http_server, args=(http_server,), daemon=True)
     http_thread.start()
 
     internet_was_online = True
