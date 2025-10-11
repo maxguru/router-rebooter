@@ -113,6 +113,10 @@ CONFIGURATION:
     ping_packet_size = 0              # Ping packet data size in bytes (0-65507, default 0)
     check_interval_online = 10        # Seconds between checks when internet is up
     check_interval_offline = 30       # Seconds between checks when internet is down
+    reboot_hold_period_base = 300     # Base hold period in seconds (5 minutes)
+    reboot_hold_period_max = 7200     # Maximum hold period in seconds (2 hours)
+    reboot_backoff_multiplier = 2.0   # Multiplier for exponential backoff
+    reboot_stability_period = 3600    # Seconds of uptime to reset backoff (1 hour)
 
     [GPIO]
     relay_pin = 17                    # GPIO pin number for relay control
@@ -168,6 +172,11 @@ reboot_queue = Queue()
 # Declared here for reference by functions
 config = {}
 
+# Backoff state variables
+backoff_level = 0
+last_reboot_time = None
+last_online_time = None
+
 def create_default_config(config_path):
     """Create a default configuration file and exit."""
     if os.path.exists(config_path):
@@ -188,7 +197,11 @@ def create_default_config(config_path):
         'ping_timeout': '2',
         'ping_packet_size': '0',
         'check_interval_online': '10',
-        'check_interval_offline': '30'
+        'check_interval_offline': '30',
+        'reboot_hold_period_base': '300',
+        'reboot_hold_period_max': '7200',
+        'reboot_backoff_multiplier': '2.0',
+        'reboot_stability_period': '3600'
     }
 
     parser['GPIO'] = {
@@ -234,6 +247,10 @@ def load_config(config_path):
         'ping_packet_size': parser.getint('Network', 'ping_packet_size', fallback=0),
         'check_interval_online': parser.getint('Network', 'check_interval_online'),
         'check_interval_offline': parser.getint('Network', 'check_interval_offline'),
+        'reboot_hold_period_base': parser.getint('Network', 'reboot_hold_period_base', fallback=300),
+        'reboot_hold_period_max': parser.getint('Network', 'reboot_hold_period_max', fallback=7200),
+        'reboot_backoff_multiplier': parser.getfloat('Network', 'reboot_backoff_multiplier', fallback=2.0),
+        'reboot_stability_period': parser.getint('Network', 'reboot_stability_period', fallback=3600),
         'relay_pin': parser.getint('GPIO', 'relay_pin'),
         'http_port': parser.getint('HTTP', 'port'),
         'http_auth_username': parser.get('HTTP', 'auth_username', fallback=''),
@@ -724,6 +741,67 @@ def check_internet():
     logger.warning(f"Internet check failed: {failed_attempts}/{retries} packets lost (100% packet loss)")
     return False
 
+def calculate_hold_period():
+    """Calculate current hold period based on backoff level."""
+    global backoff_level
+    base = config['reboot_hold_period_base']
+    multiplier = config['reboot_backoff_multiplier']
+    max_period = config['reboot_hold_period_max']
+
+    hold_period = base * (multiplier ** backoff_level)
+    return min(hold_period, max_period)
+
+def is_reboot_allowed():
+    """Check if reboot is allowed (not in hold period)."""
+    global last_reboot_time
+
+    # If never rebooted, allow reboot
+    if last_reboot_time is None:
+        return True
+
+    # Calculate time since last reboot
+    time_since_reboot = time.time() - last_reboot_time
+    current_hold_period = calculate_hold_period()
+
+    if time_since_reboot < current_hold_period:
+        remaining = int(current_hold_period - time_since_reboot)
+        logger.warning(f"Reboot suppressed: in hold period ({remaining} seconds remaining, backoff level: {backoff_level})")
+        return False
+
+    return True
+
+def check_stability_reset():
+    """Check if backoff should reset due to stability period."""
+    global backoff_level, last_online_time
+
+    # If never came online or backoff already at 0, nothing to do
+    if last_online_time is None or backoff_level == 0:
+        return
+
+    # Calculate time online since last reboot
+    time_online = time.time() - last_online_time
+    stability_period = config['reboot_stability_period']
+
+    if time_online >= stability_period:
+        old_level = backoff_level
+        old_hold_period = calculate_hold_period()
+        backoff_level = 0
+        new_hold_period = calculate_hold_period()
+        logger.info(f"Stability period reached ({int(time_online)}s online), backoff reset (level: {old_level}→{backoff_level}, hold period: {int(old_hold_period)}→{int(new_hold_period)}s)")
+
+def increment_backoff():
+    """Increment backoff level after automatic reboot."""
+    global backoff_level, last_reboot_time
+
+    old_level = backoff_level
+    old_hold_period = calculate_hold_period()
+
+    backoff_level += 1
+    last_reboot_time = time.time()
+
+    new_hold_period = calculate_hold_period()
+    logger.info(f"Backoff incremented (level: {old_level}→{backoff_level}, next hold period: {int(new_hold_period)}s)")
+
 def reboot_router():
     """Power cycle the router via relay."""
     logger.warning("Rebooting router...")
@@ -769,7 +847,15 @@ def main():
                 if not internet_was_online:
                     logger.info("Internet connection restored!")
                     has_rebooted = False
+                    # Set last_online_time for stability tracking
+                    global last_online_time
+                    last_online_time = time.time()
+
                 internet_was_online = True
+
+                # Check if we should reset backoff due to stability
+                check_stability_reset()
+
                 time.sleep(config['check_interval_online'])
             else:
                 if internet_was_online:
@@ -777,8 +863,14 @@ def main():
                     internet_was_online = False
 
                 if not has_rebooted:
-                    reboot_router()
-                    has_rebooted = True
+                    # Check if reboot is allowed (not in hold period)
+                    if is_reboot_allowed():
+                        reboot_router()
+                        increment_backoff()
+                        has_rebooted = True
+                    else:
+                        # Reboot suppressed, wait and check again
+                        time.sleep(config['check_interval_offline'])
                 else:
                     logger.info(f"Internet still down (already rebooted). Checking again in {config['check_interval_offline']} seconds...")
                     time.sleep(config['check_interval_offline'])

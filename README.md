@@ -79,6 +79,12 @@ check_interval_online = 10
 # Seconds to wait between checks when internet is offline (after reboot)
 check_interval_offline = 30
 
+# Reboot hold period and exponential backoff
+reboot_hold_period_base = 300
+reboot_hold_period_max = 7200
+reboot_backoff_multiplier = 2.0
+reboot_stability_period = 3600
+
 [GPIO]
 # GPIO pin number (BCM mode) connected to the relay
 relay_pin = 17
@@ -111,6 +117,63 @@ log_level = INFO
 ```bash
 python3 router-rebooter.py --config /path/to/custom.conf
 ```
+
+### Reboot Hold Period and Exponential Backoff
+
+The router rebooter includes intelligent backoff logic to prevent excessive reboots during intermittent ISP issues or high packet loss scenarios.
+
+**How it works:**
+
+1. **Hold Period**: After a reboot, the router will NOT be rebooted again for a certain period, even if internet goes down
+2. **Exponential Backoff**: Each successive reboot increases the hold period exponentially
+3. **Stability Reset**: After the internet stays online for a long enough period, the backoff resets to baseline
+
+**Configuration:**
+
+```ini
+# Base hold period after first reboot (5 minutes)
+reboot_hold_period_base = 300
+
+# Maximum hold period (2 hours - caps exponential growth)
+reboot_hold_period_max = 7200
+
+# Multiplier for exponential backoff (2.0 = double each time)
+reboot_backoff_multiplier = 2.0
+
+# Seconds of stable uptime required to reset backoff (1 hour)
+reboot_stability_period = 3600
+```
+
+**Example scenario:**
+
+With default settings (base=300s, multiplier=2.0, max=7200s):
+
+```
+Reboot #1: Hold period = 300s (5 min)
+  → If internet fails again within 5 min, reboot is suppressed
+  → After 5 min, reboot is allowed
+
+Reboot #2: Hold period = 600s (10 min)
+  → Must wait 10 min before next reboot
+
+Reboot #3: Hold period = 1200s (20 min)
+  → Must wait 20 min before next reboot
+
+Reboot #4: Hold period = 2400s (40 min)
+Reboot #5: Hold period = 4800s (80 min)
+Reboot #6+: Hold period = 7200s (2 hours - capped at max)
+```
+
+**Stability reset:**
+- If internet stays online for 1 hour (3600s) without needing a reboot
+- Backoff level resets to 0
+- Next reboot will use the base hold period (5 min)
+
+**Benefits:**
+- Prevents reboot loops during ISP maintenance or intermittent issues
+- Progressively becomes more conservative after repeated failures
+- Automatically returns to normal sensitivity after stability is restored
+- Manual reboots via web interface do NOT affect backoff
 
 ### Configuring Ping Behavior
 
