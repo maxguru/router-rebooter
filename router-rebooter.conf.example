@@ -1,0 +1,56 @@
+# Router Rebooter Configuration File
+# This file will be created automatically with default values on first run
+# You can customize these settings as needed
+
+[Network]
+# Comma-separated list of hosts to ping for internet connectivity check
+# Multiple hosts provide redundancy if one target goes down
+# Each ping attempt randomly selects a host from this list
+# Default hosts: Google DNS, Cloudflare DNS, OpenDNS, Quad9 DNS
+ping_hosts = 8.8.8.8, 1.1.1.1, 208.67.222.222, 9.9.9.9
+
+# Number of ping retries before declaring internet is offline
+ping_retries = 5
+
+# Seconds to wait for each ping response
+ping_timeout = 2
+
+# Ping packet data size in bytes (0-65507)
+# 0 bytes (default) sends minimal packet for reachability check only
+# 56 bytes tests data integrity through the network
+ping_packet_size = 0
+
+# Seconds to wait between checks when internet is online
+check_interval_online = 10
+
+# Seconds to wait between checks when internet is offline (after reboot)
+check_interval_offline = 30
+
+[GPIO]
+# GPIO pin number (BCM mode) connected to the relay
+relay_pin = 17
+
+[HTTP]
+# Port for the web interface
+port = 8080
+
+# HTTP Basic Authentication (optional)
+# Leave both empty to disable authentication
+# WARNING: Password is stored in plain text - use strong password and restrict file permissions
+auth_username =
+auth_password =
+
+# SSL/HTTPS (optional)
+# Set to true to enable HTTPS with self-signed certificate
+# Certificate will be auto-generated if it doesn't exist (requires openssl)
+ssl_enabled = false
+ssl_cert = cert.pem
+ssl_key = key.pem
+
+[Logging]
+# Path to the log file (relative or absolute)
+log_file = router-rebooter.log
+
+# Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = INFO
+
