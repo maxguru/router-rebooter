@@ -59,8 +59,10 @@ This will create a configuration file with default values. Edit it to customize 
 
 ```ini
 [Network]
-# Host to ping for internet connectivity check
-ping_host = 8.8.8.8
+# Comma-separated list of hosts to ping for internet connectivity check
+# Multiple hosts provide redundancy if one target goes down
+# Each ping attempt randomly selects a host from this list
+ping_hosts = 8.8.8.8, 1.1.1.1, 208.67.222.222, 9.9.9.9
 
 # Number of ping retries before declaring internet is offline
 ping_retries = 5
@@ -115,6 +117,17 @@ python3 router-rebooter.py --config /path/to/custom.conf
 ### Configuring Ping Behavior
 
 You can customize how the script checks internet connectivity:
+
+**Ping Hosts (`ping_hosts`):**
+- Comma-separated list of hosts to ping for connectivity checks
+- Default: `8.8.8.8, 1.1.1.1, 208.67.222.222, 9.9.9.9`
+  - 8.8.8.8 - Google Public DNS
+  - 1.1.1.1 - Cloudflare DNS
+  - 208.67.222.222 - OpenDNS
+  - 9.9.9.9 - Quad9 DNS
+- Each ping attempt randomly selects one host from the list
+- Multiple hosts provide redundancy if one target goes down temporarily
+- Prevents false positives from single target failures
 
 **Ping Timeout (`ping_timeout`):**
 - How long to wait for each ping response (in seconds)

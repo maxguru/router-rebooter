@@ -107,7 +107,7 @@ CONFIGURATION:
     Configuration file format (INI style):
 
     [Network]
-    ping_host = 8.8.8.8              # Host to ping for internet check
+    ping_hosts = 8.8.8.8, 1.1.1.1, 208.67.222.222, 9.9.9.9  # Comma-separated list of hosts to ping
     ping_retries = 5                  # Number of ping retries before declaring offline
     ping_timeout = 2                  # Seconds to wait for ping response
     ping_packet_size = 0              # Ping packet data size in bytes (0-65507, default 0)
@@ -154,6 +154,7 @@ import configparser
 import os
 import base64
 import ssl
+import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from queue import Queue
 import RPi.GPIO as GPIO
@@ -183,7 +184,7 @@ def create_default_config(config_path):
         f.write("# Edit these settings as needed\n\n")
 
     parser['Network'] = {
-        'ping_host': '8.8.8.8',
+        'ping_hosts': '8.8.8.8, 1.1.1.1, 208.67.222.222, 9.9.9.9',
         'ping_retries': '5',
         'ping_timeout': '2',
         'ping_packet_size': '0',
@@ -226,9 +227,17 @@ def load_config(config_path):
     parser = configparser.ConfigParser()
     parser.read(config_path)
 
+    # Parse ping hosts (comma-separated list)
+    ping_hosts_str = parser.get('Network', 'ping_hosts')
+    ping_hosts = [host.strip() for host in ping_hosts_str.split(',') if host.strip()]
+
+    if not ping_hosts:
+        print("Error: ping_hosts is empty. At least one host must be specified.")
+        sys.exit(1)
+
     # Load configuration into global dict
     cfg = {
-        'ping_host': parser.get('Network', 'ping_host'),
+        'ping_hosts': ping_hosts,
         'ping_retries': parser.getint('Network', 'ping_retries'),
         'ping_timeout': parser.getint('Network', 'ping_timeout', fallback=2),
         'ping_packet_size': parser.getint('Network', 'ping_packet_size', fallback=0),
@@ -690,12 +699,16 @@ signal.signal(signal.SIGINT, cleanup_and_exit)
 signal.signal(signal.SIGTERM, cleanup_and_exit)
 
 def check_internet():
-    """Check if internet is available by pinging a host with retries."""
-    host = config['ping_host']
+    """Check if internet is available by pinging a randomly selected host with retries."""
+    hosts = config['ping_hosts']
     retries = config['ping_retries']
     timeout = config['ping_timeout']
     packet_size = config['ping_packet_size']
     failed_attempts = 0
+
+    # Randomly select a host for this check
+    host = random.choice(hosts)
+    logger.debug(f"Selected ping target: {host} (from {len(hosts)} configured hosts)")
 
     for attempt in range(retries):
         try:
@@ -708,20 +721,20 @@ def check_internet():
                 # Report packet loss if there were any failures before success
                 if failed_attempts > 0:
                     loss_percent = (failed_attempts / (attempt + 1)) * 100
-                    logger.warning(f"Packet loss detected: {failed_attempts}/{attempt + 1} packets lost ({loss_percent:.1f}%)")
+                    logger.warning(f"Packet loss detected to {host}: {failed_attempts}/{attempt + 1} packets lost ({loss_percent:.1f}%)")
                 return True  # Success - internet is up
             else:
                 failed_attempts += 1
         except Exception as e:
             failed_attempts += 1
-            logger.error(f"Error checking internet (attempt {attempt + 1}/{retries}): {e}")
+            logger.error(f"Error checking internet via {host} (attempt {attempt + 1}/{retries}): {e}")
 
         # If failed and not last attempt, wait before retry
         if attempt < retries - 1:
             time.sleep(1)
 
     # All retries failed
-    logger.warning(f"Internet check failed: {failed_attempts}/{retries} packets lost (100% packet loss)")
+    logger.warning(f"Internet check failed to {host}: {failed_attempts}/{retries} packets lost (100% packet loss)")
     return False
 
 def reboot_router():
