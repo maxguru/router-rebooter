@@ -125,7 +125,8 @@ You can customize how the script checks internet connectivity:
   - 1.1.1.1 - Cloudflare DNS
   - 208.67.222.222 - OpenDNS
   - 9.9.9.9 - Quad9 DNS
-- Each ping attempt randomly selects one host from the list
+- Each ping attempt uses a randomly selected host from the list
+- With 5 retries (default), up to 5 different hosts may be tested per check
 - Multiple hosts provide redundancy if one target goes down temporarily
 - Prevents false positives from single target failures
 

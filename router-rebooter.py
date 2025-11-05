@@ -699,18 +699,20 @@ signal.signal(signal.SIGINT, cleanup_and_exit)
 signal.signal(signal.SIGTERM, cleanup_and_exit)
 
 def check_internet():
-    """Check if internet is available by pinging a randomly selected host with retries."""
+    """Check if internet is available by pinging randomly selected hosts with retries."""
     hosts = config['ping_hosts']
     retries = config['ping_retries']
     timeout = config['ping_timeout']
     packet_size = config['ping_packet_size']
     failed_attempts = 0
-
-    # Randomly select a host for this check
-    host = random.choice(hosts)
-    logger.debug(f"Selected ping target: {host} (from {len(hosts)} configured hosts)")
+    pinged_hosts = []  # Track which hosts were pinged
 
     for attempt in range(retries):
+        # Randomly select a host for this attempt
+        host = random.choice(hosts)
+        pinged_hosts.append(host)
+        logger.debug(f"Ping attempt {attempt + 1}/{retries}: selected target {host}")
+
         try:
             result = subprocess.run(
                 ["ping", "-c1", f"-W{timeout}", f"-s{packet_size}", host],
@@ -721,7 +723,8 @@ def check_internet():
                 # Report packet loss if there were any failures before success
                 if failed_attempts > 0:
                     loss_percent = (failed_attempts / (attempt + 1)) * 100
-                    logger.warning(f"Packet loss detected to {host}: {failed_attempts}/{attempt + 1} packets lost ({loss_percent:.1f}%)")
+                    hosts_str = ', '.join(pinged_hosts)
+                    logger.warning(f"Packet loss detected to [{hosts_str}]: {failed_attempts}/{attempt + 1} packets lost ({loss_percent:.1f}%)")
                 return True  # Success - internet is up
             else:
                 failed_attempts += 1
@@ -734,7 +737,8 @@ def check_internet():
             time.sleep(1)
 
     # All retries failed
-    logger.warning(f"Internet check failed to {host}: {failed_attempts}/{retries} packets lost (100% packet loss)")
+    hosts_str = ', '.join(pinged_hosts)
+    logger.warning(f"Internet check failed to [{hosts_str}]: {failed_attempts}/{retries} packets lost (100% packet loss)")
     return False
 
 def reboot_router():
